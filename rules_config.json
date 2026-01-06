@@ -1,0 +1,33 @@
+{
+  "rules": [
+    {
+      "id": "pricing_rule",
+      "priority": 10,
+      "conditions": {
+        "event_type": "message_received",
+        "keywords": ["price", "cost"]
+      },
+      "actions": {
+        "reply": "Our pricing starts from $99/month.",
+        "tag": "pricing_interest",
+        "score": 5,
+        "followup": {
+          "delay": 10,
+          "message": "Let me know if you want help choosing a plan 😊"
+        }
+      }
+    },
+    {
+      "id": "demo_rule",
+      "priority": 8,
+      "conditions": {
+        "event_type": "message_received",
+        "keywords": ["demo"]
+      },
+      "actions": {
+        "tag": "demo_request",
+        "score": 7
+      }
+    }
+  ]
+}
