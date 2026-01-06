@@ -101,6 +101,7 @@
 #     return {"items": list_webhook_queue(limit)}
 
 from fastapi import FastAPI, Header, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from models import Event
 from rules import evaluate_rules
 from storage import (
@@ -116,6 +117,14 @@ from storage import (
 from dispatcher import dispatch_pending
 
 app = FastAPI(title="AxiomFlow", version="0.1.0")
+# 🔥 CORS (REQUIRED FOR DASHBOARD)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # =========================
