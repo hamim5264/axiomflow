@@ -456,6 +456,9 @@ from typing import Optional, Dict, Any, List
 DB_PATH = "axiomflow.db"
 
 
+# =========================
+# DB CONNECTION
+# =========================
 def _connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -518,7 +521,8 @@ def init_db():
         retry_count INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY(endpoint_id) REFERENCES webhook_endpoints(id)
     )
     """)
 
@@ -528,7 +532,8 @@ def init_db():
         endpoint_id INTEGER NOT NULL,
         payload_json TEXT NOT NULL,
         error TEXT NOT NULL,
-        failed_at INTEGER NOT NULL
+        failed_at INTEGER NOT NULL,
+        FOREIGN KEY(endpoint_id) REFERENCES webhook_endpoints(id)
     )
     """)
 
@@ -537,7 +542,7 @@ def init_db():
 
 
 # =========================
-# AUTH
+# API KEYS
 # =========================
 def is_valid_api_key(api_key: str) -> bool:
     conn = _connect()
@@ -548,10 +553,115 @@ def is_valid_api_key(api_key: str) -> bool:
     return ok
 
 
+def insert_api_key(key: str, name: str):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR REPLACE INTO api_keys(key, name, created_at) VALUES (?, ?, ?)",
+        (key, name, int(time.time()))
+    )
+    conn.commit()
+    conn.close()
+
+
+# =========================
+# WEBHOOK ENDPOINTS
+# =========================
+def insert_endpoint(name: str, url: str, secret: str, is_active: int = 1):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO webhook_endpoints(name, url, secret, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (name, url, secret, int(is_active), int(time.time()))
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_active_endpoints_by_name(name: str) -> List[Dict[str, Any]]:
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id, name, url, secret
+        FROM webhook_endpoints
+        WHERE name = ? AND is_active = 1
+        """,
+        (name,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# =========================
+# LEADS (USED BY RULES)
+# =========================
+def get_lead(user_id: str) -> Dict[str, Any]:
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM leads WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return {
+            "user_id": user_id,
+            "score": 0,
+            "tags": [],
+            "last_message": None,
+        }
+
+    return {
+        "user_id": row["user_id"],
+        "score": int(row["score"]),
+        "tags": json.loads(row["tags_json"] or "[]"),
+        "last_message": row["last_message"],
+    }
+
+
+def upsert_lead(
+    user_id: str,
+    score: int,
+    tags: List[str],
+    last_message: Optional[str],
+):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO leads(user_id, score, tags_json, last_message, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            score=excluded.score,
+            tags_json=excluded.tags_json,
+            last_message=excluded.last_message,
+            updated_at=excluded.updated_at
+        """,
+        (
+            user_id,
+            int(score),
+            json.dumps(tags),
+            last_message,
+            int(time.time()),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 # =========================
 # EVENTS
 # =========================
-def log_event_to_db(event_type: str, actor_id: Optional[str], message: Optional[str], metadata: Dict[str, Any]):
+def log_event_to_db(
+    event_type: str,
+    actor_id: Optional[str],
+    message: Optional[str],
+    metadata: Dict[str, Any],
+):
     conn = _connect()
     cur = conn.cursor()
     cur.execute(
@@ -623,7 +733,87 @@ def list_events_by_actor(actor_id: str, limit: int = 200):
 
 
 # =========================
-# LEADS / DASHBOARD
+# WEBHOOK QUEUE
+# =========================
+def queue_webhook(endpoint_id: int, payload: Dict[str, Any]) -> int:
+    now = int(time.time())
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO webhook_queue(endpoint_id, payload_json, status, retry_count, created_at, updated_at)
+        VALUES (?, ?, 'pending', 0, ?, ?)
+        """,
+        (endpoint_id, json.dumps(payload), now, now)
+    )
+    job_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return int(job_id)
+
+
+def fetch_pending_webhooks(limit: int = 20):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT q.*, e.url, e.secret
+        FROM webhook_queue q
+        JOIN webhook_endpoints e ON e.id = q.endpoint_id
+        WHERE e.is_active = 1 AND q.status IN ('pending','failed')
+        ORDER BY q.created_at ASC
+        LIMIT ?
+        """,
+        (limit,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_webhook_sent(job_id: int):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE webhook_queue SET status='sent', updated_at=? WHERE id=?",
+        (int(time.time()), job_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_webhook_failed(job_id: int, retry_count: int, error: str):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE webhook_queue
+        SET status='failed', retry_count=?, last_error=?, updated_at=?
+        WHERE id=?
+        """,
+        (retry_count, error[:500], int(time.time()), job_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def move_to_dead_letter(job_row: Dict[str, Any], error: str):
+    conn = _connect()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO dead_letter_queue(endpoint_id, payload_json, error, failed_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (job_row["endpoint_id"], job_row["payload_json"], error[:1000], int(time.time()))
+    )
+    cur.execute("DELETE FROM webhook_queue WHERE id = ?", (job_row["id"],))
+    conn.commit()
+    conn.close()
+
+
+# =========================
+# DASHBOARD
 # =========================
 def list_leads(limit: int = 100):
     conn = _connect()
@@ -646,8 +836,8 @@ def list_leads(limit: int = 100):
         status = "hot" if score >= 10 else "warm" if score >= 5 else "cold"
         out.append({
             "actor_id": r["user_id"],
-            "score": score,
             "status": status,
+            "score": score,
             "last_message": r["last_message"],
             "last_seen_at": r["updated_at"],
         })
