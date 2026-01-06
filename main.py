@@ -237,3 +237,17 @@ def admin_webhook_queue(
 ):
     _require_key(x_api_key)
     return {"items": list_webhook_queue(limit)}
+
+@app.get("/admin/leads/{actor_id}/events")
+def admin_lead_events(
+    actor_id: str,
+    limit: int = 200,
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+):
+    _require_key(x_api_key)
+
+    from storage import list_events_by_actor
+
+    return {
+        "items": list_events_by_actor(actor_id, limit)
+    }
