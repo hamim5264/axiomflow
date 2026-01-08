@@ -154,6 +154,7 @@ from fastapi import FastAPI, Header, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from models import Event
 from rules import evaluate_rules
+from routes.admin_api_keys import router as api_keys_router
 from storage import (
     init_db,
     is_valid_api_key,
@@ -307,3 +308,5 @@ def admin_lead_events(
 # ✅ NEW: API KEYS ROUTES
 # =========================
 app.include_router(api_keys_router)
+app.include_router(api_keys_router)
+

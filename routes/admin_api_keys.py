@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Header, HTTPException
-from security import generate_api_key
-from storage import is_valid_api_key, insert_api_key, list_api_keys, revoke_api_key
+import secrets
+import time
+from security import is_valid_api_key, insert_api_key, list_api_keys
 
-router = APIRouter()
+router = APIRouter(prefix="/admin/api-keys", tags=["API Keys"])
 
 
 def _require_key(x_api_key: str | None):
@@ -10,38 +11,28 @@ def _require_key(x_api_key: str | None):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-@router.get("/admin/api-keys")
-def admin_list_api_keys(
-    limit: int = 200,
-    x_api_key: str | None = Header(default=None, alias="x-api-key"),
-):
+@router.get("")
+def get_keys(x_api_key: str | None = Header(default=None, alias="x-api-key")):
     _require_key(x_api_key)
-    return {"items": list_api_keys(limit)}
+    return {"items": list_api_keys()}
 
 
-@router.post("/admin/api-keys")
-def admin_create_api_key(
+@router.post("")
+def create_key(
     payload: dict,
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ):
     _require_key(x_api_key)
 
-    name = (payload.get("name") or "").strip()
+    name = payload.get("name")
     if not name:
-        raise HTTPException(status_code=400, detail="name is required")
+        raise HTTPException(status_code=400, detail="Key name required")
 
-    raw_key = generate_api_key()
-    record = insert_api_key(raw_key, name)
+    key = f"axf_{secrets.token_hex(16)}"
+    insert_api_key(key, name)
 
-    # IMPORTANT: raw key only returned once
-    return record
-
-
-@router.post("/admin/api-keys/{key_id}/revoke")
-def admin_revoke_api_key(
-    key_id: int,
-    x_api_key: str | None = Header(default=None, alias="x-api-key"),
-):
-    _require_key(x_api_key)
-    revoke_api_key(key_id)
-    return {"status": "revoked"}
+    return {
+        "key": key,
+        "name": name,
+        "created_at": int(time.time()),
+    }
