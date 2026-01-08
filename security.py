@@ -1,9 +1,8 @@
 import sqlite3
-import json
 import time
 import secrets
 import hashlib
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, List
 
 DB_PATH = "axiomflow.db"
 API_KEY_PREFIX = "axf_"
@@ -19,70 +18,30 @@ def _connect():
 
 
 # =========================
-# INIT
-# =========================
-def init_db():
-    conn = _connect()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS api_keys (
-        key TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_type TEXT NOT NULL,
-        actor_id TEXT,
-        message TEXT,
-        metadata_json TEXT,
-        created_at INTEGER NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS leads (
-        user_id TEXT PRIMARY KEY,
-        score INTEGER NOT NULL DEFAULT 0,
-        tags_json TEXT NOT NULL DEFAULT '[]',
-        last_message TEXT,
-        updated_at INTEGER NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS webhook_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        payload_json TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        created_at INTEGER NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS dead_letter_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        payload_json TEXT NOT NULL,
-        error TEXT NOT NULL,
-        failed_at INTEGER NOT NULL
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-
-# =========================
 # API KEY UTILITIES
 # =========================
 def generate_api_key() -> str:
+    # Example: axf_AbCdEf...
     return API_KEY_PREFIX + secrets.token_urlsafe(32)
 
 
+def hash_api_key(raw_key: str) -> str:
+    # Keep for compatibility (your storage.py imports it)
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+
+def key_preview(raw_key: str) -> str:
+    # Keep for compatibility (your storage.py imports it)
+    if not raw_key:
+        return ""
+    head = raw_key[:10]
+    tail = raw_key[-4:] if len(raw_key) > 14 else ""
+    return f"{head}…{tail}"
+
+
+# =========================
+# API KEYS (DB)
+# =========================
 def is_valid_api_key(api_key: str) -> bool:
     conn = _connect()
     cur = conn.cursor()
@@ -106,7 +65,7 @@ def insert_api_key(key: str, name: str):
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO api_keys(key, name, created_at) VALUES (?, ?, ?)",
-        (key, name, int(time.time()))
+        (key, name, int(time.time())),
     )
     conn.commit()
     conn.close()
@@ -125,9 +84,11 @@ def list_api_keys() -> List[Dict[str, Any]]:
     rows = cur.fetchall()
     conn.close()
 
+    # NOTE: for safety, we return key preview not full key
+    # But your UI currently expects "key" for preview. We'll keep it as-is.
     return [
         {
-            "key": r["key"],
+            "key": key_preview(r["key"]),
             "name": r["name"],
             "created_at": r["created_at"],
         }
