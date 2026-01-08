@@ -6,6 +6,7 @@ from security import (
     insert_api_key,
     list_api_keys,
     is_valid_api_key,
+    has_any_api_key,
 )
 
 router = APIRouter(prefix="/admin/api-keys", tags=["API Keys"])
@@ -33,9 +34,7 @@ class CreateKeyPayload(BaseModel):
 def get_api_keys(
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ):
-    # 🔓 TEMPORARY BOOTSTRAP (REMOVE AFTER FIRST KEY)
-    # _require_key(x_api_key)
-
+    _require_key(x_api_key)
     return {"items": list_api_keys()}
 
 
@@ -44,14 +43,14 @@ def create_api_key(
     payload: CreateKeyPayload,
     x_api_key: str | None = Header(default=None, alias="x-api-key"),
 ):
-    # 🔓 TEMPORARY BOOTSTRAP (REMOVE AFTER FIRST KEY)
-    # _require_key(x_api_key)
+    # 🔓 BOOTSTRAP MODE (ONLY WHEN NO KEYS EXIST)
+    if has_any_api_key():
+        _require_key(x_api_key)
 
     raw_key = generate_api_key()
     insert_api_key(raw_key, payload.name)
 
-    # 🔐 return RAW key only ONCE
     return {
-        "key": raw_key,
+        "key": raw_key,   # shown ONCE
         "name": payload.name,
     }
